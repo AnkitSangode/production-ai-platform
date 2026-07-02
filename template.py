@@ -1,37 +1,27 @@
 from pathlib import Path
 
-PROJECT_NAME = "production-ai-platform"
-
-# Directories to create
 directories = [
-    PROJECT_NAME,
-    f"{PROJECT_NAME}/backend",
-    f"{PROJECT_NAME}/frontend",
-    f"{PROJECT_NAME}/infrastructure",
-    f"{PROJECT_NAME}/docs",
-    f"{PROJECT_NAME}/scripts",
+    "backend/app",
+    "backend/tests",
+    "frontend",
+    "docs",
+    "infrastructure",
+    "scripts",
 ]
 
-# Files to create
 files = [
-    f"{PROJECT_NAME}/README.md",
-    f"{PROJECT_NAME}/.gitignore",
+    "backend/app/__init__.py",
+    "backend/app/main.py",
+    "backend/tests/__init__.py",
+    "backend/.env.example",
 ]
 
-# Create directories and .gitkeep
 for directory in directories:
-    dir_path = Path(directory)
-    dir_path.mkdir(parents=True, exist_ok=True)
+    Path(directory).mkdir(parents=True, exist_ok=True)
 
-    # Don't create .gitkeep in the project root
-    if dir_path.name != PROJECT_NAME:
-        gitkeep = dir_path / ".gitkeep"
-        gitkeep.touch(exist_ok=True)
-
-# Create root files
 for file in files:
-    Path(file).touch(exist_ok=True)
+    path = Path(file)
+    if not path.exists():
+        path.touch()
 
-print("=" * 60)
-print("✅ Production AI Platform initialized successfully!")
-print("=" * 60)
+print("✅ Project structure updated.")
