@@ -17,7 +17,7 @@ class Settings(BaseSettings):
     chroma_host:str = "localhost"
     chroma_port: int = 8001
 
-    max_uplaod_size_mb: int = 100
+    max_upload_size_mb: int = 100
 
     log_level: str = "INFO"
 
