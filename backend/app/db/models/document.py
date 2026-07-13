@@ -8,7 +8,10 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
 
-from app.db.models.user import User
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from app.db.models.user import User
 
 
 class Document(Base):
