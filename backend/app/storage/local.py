@@ -28,9 +28,14 @@ class LocalStorageService(StorageService):
     ) -> None:
         file_path = self.upload_dir / storage_key
         with open(file_path, "wb") as destination:
-            while True:
-                chunk = file.file.read(1024 * 1024)
-                if not chunk:
-                    break
+            try:
+                while True:
+                    chunk = file.file.read(1024*1024)
 
-            destination.write(chunk)
+                    if not chunk:
+                        break
+                    destination.write(chunk)
+            except Exception:
+                if file_path.exists():
+                    file_path.unlink()
+                raise 
