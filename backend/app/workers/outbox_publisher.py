@@ -30,7 +30,27 @@ class OutboxPublisher:
                 logger.warning(...)
                 sleep(...)
 
-    def process_batch(self, session): ...
+    def process_batch(self, session: Session) -> bool : 
+        events = self._claim_batch(session)
+
+        if not events:
+            return False
+
+        session.commit()
+
+        for event in events:
+            try:
+                self._publish_event(event)
+
+                self._mark_published(session,event)
+
+                session.commit()
+
+            except Exception:
+                session.rollback()
+                raise
+
+        return True
 
     def _claim_batch(self, session: Session) -> list[OutboxEvent]:
         stmt = (
