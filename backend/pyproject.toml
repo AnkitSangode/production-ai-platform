@@ -5,6 +5,7 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+    "aio-pika>=10.0.1",
     "alembic>=1.18.5",
     "fastapi>=0.139.0",
     "psycopg[binary]>=3.3.4",

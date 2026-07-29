@@ -10,6 +10,7 @@ class Settings(BaseSettings):
     debug: bool = True
 
     database_url: str
+    rabbitmq_url: str
     redis_url: str
 
     openai_api_key: str
