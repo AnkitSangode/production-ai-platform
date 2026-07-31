@@ -2,7 +2,7 @@ import aio_pika
 
 from aio_pika import Connection, Channel, ExchangeType, Exchange, IncomingMessage
 
-from app.messaging.broker import MessageBroker
+from app.messaging.broker import MessageBroker, MessageHandler
 
 from app.core.config import Settings
 
@@ -85,19 +85,24 @@ class RabbitMQBroker(MessageBroker):
             routing_key=routing_key,
         )
 
-        async with queue.iterator() as iterator:
+        self.logger.info(
+            "Consuming messages from queue '%s' with routing key '%s'",
+            queue_name,
+            routing_key,
+        )
 
+        async with queue.iterator() as iterator:
             async for incoming_message in iterator:
 
                 try:
                     message = RabbitMQMessage(
-                        incoming_message,
+                        incoming_message=incoming_message,
                     )
 
                 except InvalidMessageError:
 
                     self.logger.exception(
-                        "Invalid message received."
+                        "Received invalid RabbitMQ message."
                     )
 
                     await incoming_message.reject(

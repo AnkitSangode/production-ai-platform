@@ -2,6 +2,8 @@ from typing import Protocol, Any
 
 from collections.abc import Awaitable, Callable
 
+from app.messaging.messages import Message
+
 MessageHandler = Callable[
     [Message],
     Awaitable[None],
