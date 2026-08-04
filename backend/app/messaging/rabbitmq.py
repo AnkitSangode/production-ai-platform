@@ -8,11 +8,14 @@ from app.core.config import Settings
 
 import json
 
-from aio_pika import Message, DeliveryMode
+from aio_pika import Message,DeliveryMode
+
+from app.messaging.messages import Messages
 
 from typing import Any
 
 from app.messaging.exceptions import InvalidMessageError
+
 
 class RabbitMQBroker(MessageBroker):
 
@@ -25,6 +28,7 @@ class RabbitMQBroker(MessageBroker):
         self.exchange: Exchange | None = None
 
     async def connect(self):
+
         self.connection = await aio_pika.connect_robust(self.settings.rabbitmq_url)
 
         self.channel = await self.connection.channel()
@@ -49,7 +53,12 @@ class RabbitMQBroker(MessageBroker):
     ) -> None:
         self._require_connected()
 
-        body = json.dumps(payload).encode("utf-8")
+        body = json.dumps(
+            {
+                "event_type": event_type,
+                "payload": payload,
+            }
+        ).encode("utf-8")
 
         message = Message(
             body=body,
@@ -101,9 +110,7 @@ class RabbitMQBroker(MessageBroker):
 
                 except InvalidMessageError:
 
-                    self.logger.exception(
-                        "Received invalid RabbitMQ message."
-                    )
+                    self.logger.exception("Received invalid RabbitMQ message.")
 
                     await incoming_message.reject(
                         requeue=False,
@@ -114,7 +121,7 @@ class RabbitMQBroker(MessageBroker):
                 await handler(message)
 
 
-class RabbitMQMessage(Message):
+class RabbitMQMessage(Messages):
 
     def __init__(
         self,

@@ -2,7 +2,7 @@
 from typing import Any, Protocol
 
 
-class Message(Protocol):
+class Messages(Protocol):
     @property
     def event_type(self) -> str:
         ...
