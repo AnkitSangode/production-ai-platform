@@ -10,25 +10,23 @@ from app.db.models.outbox_event import OutboxEvent
 
 from fastapi import UploadFile
 
-from app.repositories.document_repository import DocumentRepository
-
-from app.repositories.outbox_repository import OutboxRepository
+from app.uow.unit_of_work import UnitOfWork
 
 from app.enums.outbox import EventType
+
+from app.parser.base import ParserService
 
 
 class DocumentService:
     def __init__(
         self,
-        repository: DocumentRepository,
-        outbox_repository: OutboxRepository,
+        uow: UnitOfWork,
         storage: StorageService,
-        db: Session,
+        parser: ParserService,
     ):
-        self.repository = repository
+        self.uow = uow
         self.storage = storage
-        self.db = db
-        self.outbox_repository = outbox_repository
+        self.parser = parser
 
     def upload_document(self, file: UploadFile, current_user: User) -> Document:
 
