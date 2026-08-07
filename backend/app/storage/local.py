@@ -1,12 +1,12 @@
-from pathlib import Path
-from uuid import uuid4
-from typing import BinaryIO
 from collections.abc import Generator
+from pathlib import Path
+from typing import BinaryIO
+from uuid import uuid4
 
 from fastapi import UploadFile
 
 from app.core.config import Settings
-from app.storage.base import StorageService
+from app.storage.base import StorageService, StorageResult
 
 
 class LocalStorageService(StorageService):
@@ -17,15 +17,16 @@ class LocalStorageService(StorageService):
         self.upload_dir = Path(settings.UPLOAD_DIR)
         self.upload_dir.mkdir(parents=True, exist_ok=True)
 
-    def generate_storage_key(self, filename: str) -> str:
+    def _generate_storage_key(self, filename: str) -> str:
         extension = Path(filename).suffix
         return f"{uuid4()}{extension}"
 
     def store(
         self,
         file: UploadFile,
-        storage_key: str,
-    ) -> int:
+    ) -> StorageResult:
+        storage_key = self._generate_storage_key(file.filename)
+
         file_path = self.upload_dir / storage_key
         file_size = 0
 
@@ -40,7 +41,10 @@ class LocalStorageService(StorageService):
                     destination.write(chunk)
                     file_size += len(chunk)
 
-            return file_size
+            return StorageResult(
+                storage_key=storage_key,
+                size=file_size,
+            )
 
         except Exception:
             if file_path.exists():
@@ -48,7 +52,10 @@ class LocalStorageService(StorageService):
 
             raise
 
-    def retrieve(self, storage_key: str) -> BinaryIO:
+    def retrieve(
+        self,
+        storage_key: str,
+    ) -> BinaryIO:
         file_path = self.upload_dir / storage_key
 
         if not file_path.exists():
@@ -74,7 +81,10 @@ class LocalStorageService(StorageService):
 
                 yield chunk
 
-    def delete(self, storage_key: str) -> None:
+    def delete(
+        self,
+        storage_key: str,
+    ) -> None:
         file_path = self.upload_dir / storage_key
 
         if file_path.exists():

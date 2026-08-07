@@ -3,12 +3,21 @@ from uuid import UUID
 
 from pydantic import BaseModel
 
-from app.db.models.document import 
+from app.enums.document import DocumentStatus
 
 
 class DocumentResponse(BaseModel):
+    
+
     id: UUID
-    original_filename: str
+    filename: str
     file_size: int
     status: DocumentStatus
     created_at: datetime
+
+
+class UploadDocumentRequest(BaseModel):
+    title: str | None
+    workspace_id: UUID
+    visibility: Visibility
+    tags: list[str]

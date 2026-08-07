@@ -3,12 +3,14 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import UUID, uuid4
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String
+from sqlalchemy import DateTime, ForeignKey, Integer, String, Enum
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
 
 from typing import TYPE_CHECKING
+
+from app.enums.document import DocumentStatus
 
 if TYPE_CHECKING:
     from app.db.models.user import User
@@ -69,10 +71,10 @@ class Document(Base):
     # Processing
     # -------------------------
 
-    status: Mapped[str] = mapped_column(
-        String(50),
+    status: Mapped[DocumentStatus] = mapped_column(
+        Enum(DocumentStatus),
+        default=DocumentStatus.UPLOADED,
         nullable=False,
-        default="UPLOADED",
     )
 
     error_message: Mapped[str | None] = mapped_column(

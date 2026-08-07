@@ -6,6 +6,15 @@ from collections.abc import Generator
 
 from typing import BinaryIO
 
+from dataclasses import dataclass
+
+
+
+@dataclass(frozen=True)
+class StorageResult:
+    storage_key: str
+    file_size: int
+
 
 class StorageService(ABC):
     @abstractmethod
