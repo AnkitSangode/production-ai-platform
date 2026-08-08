@@ -7,10 +7,13 @@ requires-python = ">=3.11"
 dependencies = [
     "aio-pika>=10.0.1",
     "alembic>=1.18.5",
+    "email-validator>=2.3.0",
     "fastapi>=0.139.0",
     "langchain-text-splitters>=1.1.2",
     "psycopg[binary]>=3.3.4",
+    "pwdlib[argon2]>=0.3.0",
     "pydantic-settings>=2.14.2",
+    "pyjwt>=2.13.0",
     "pypdf>=6.14.2",
     "sqlalchemy>=2.0.51",
     "uvicorn>=0.49.0",

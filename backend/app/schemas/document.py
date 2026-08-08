@@ -19,5 +19,4 @@ class DocumentResponse(BaseModel):
 class UploadDocumentRequest(BaseModel):
     title: str | None
     workspace_id: UUID
-    visibility: Visibility
     tags: list[str]

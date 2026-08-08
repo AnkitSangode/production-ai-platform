@@ -7,6 +7,7 @@ from fastapi import UploadFile
 
 from app.core.config import Settings
 from app.storage.base import StorageService, StorageResult
+from app.exceptions.storage import StorageLimitExceededError
 
 
 class LocalStorageService(StorageService):
@@ -29,6 +30,7 @@ class LocalStorageService(StorageService):
 
         file_path = self.upload_dir / storage_key
         file_size = 0
+        max_size = self.settings.MAX_DOCUMENT_SIZE
 
         try:
             with open(file_path, "wb") as destination:
@@ -37,6 +39,14 @@ class LocalStorageService(StorageService):
 
                     if not chunk:
                         break
+
+                    chunk_size = len(chunk)
+
+                    if file_size + chunk_size > max_size:
+                        raise StorageLimitExceededError(
+                            actual_size=file_size + chunk_size,
+                            max_size=max_size,
+                        )
 
                     destination.write(chunk)
                     file_size += len(chunk)

@@ -1,7 +1,7 @@
 from fastapi import Depends
 from sqlalchemy.orm import Session
 
-from app.dependencies import get_db
+from app.db.dependencies import get_db
 from app.uow.unit_of_work import UnitOfWork
 
 

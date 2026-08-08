@@ -3,7 +3,7 @@ from typing import Any
 
 from app.repositories.document_repository import DocumentRepository
 from app.repositories.outbox_repository import OutboxRepository
-
+from app.repositories.user import UserRepository
 
 class UnitOfWork:
     def __init__(self, db: Session):
@@ -11,6 +11,7 @@ class UnitOfWork:
 
         self.documents = DocumentRepository(db)
         self.outbox = OutboxRepository(db)
+        self.user = UserRepository(db)
 
     def commit(self) -> None:
         self._db.commit()

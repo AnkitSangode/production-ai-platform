@@ -21,3 +21,8 @@ class DocumentTooLargeError(DocumentError):
 
 class DocumentNotFoundError(DocumentError):
     pass
+
+
+class EmptyFileError(DocumentError):
+    pass
+

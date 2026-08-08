@@ -13,12 +13,16 @@ class Settings(BaseSettings):
     rabbitmq_url: str
     redis_url: str
 
+    JWT_SECRET_KEY: str
+    JWT_ALGORITHM: str = "HS256"
+    JWT_ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
+
     openai_api_key: str
 
     chroma_host:str = "localhost"
     chroma_port: int = 8001
 
-    max_upload_size_mb: int = 100
+    MAX_DOCUMENT_SIZE: int = 25 * 1024 * 1024
 
     log_level: str = "INFO"
 

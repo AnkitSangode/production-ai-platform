@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, File, UploadFile, status
 
-from app.dependencies. import get_current_user
+from app.dependencies import get_current_user
 from app.dependencies.service import get_document_service
 from app.db.models.user import User
 from app.schemas.document import DocumentResponse
