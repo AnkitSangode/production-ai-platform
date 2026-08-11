@@ -53,7 +53,7 @@ class LocalStorageService(StorageService):
 
             return StorageResult(
                 storage_key=storage_key,
-                size=file_size,
+                file_size=file_size,
             )
 
         except Exception:

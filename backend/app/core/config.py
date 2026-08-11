@@ -23,6 +23,7 @@ class Settings(BaseSettings):
     chroma_port: int = 8001
 
     MAX_DOCUMENT_SIZE: int = 25 * 1024 * 1024
+    UPLOAD_DIR: str = "uploads"
 
     log_level: str = "INFO"
 

@@ -17,13 +17,9 @@ class StorageResult:
 
 
 class StorageService(ABC):
-    @abstractmethod
-    def generate_storage_key(self, filename: str) -> str:
-        """Generate a unique storage key for the uploaded file."""
-        ...
 
     @abstractmethod
-    def store(self, file: UploadFile, storage_key: str) -> int:
+    def store(self, file: UploadFile) -> int:
         """Store the uploaded file."""
         ...
 

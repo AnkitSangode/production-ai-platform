@@ -6,6 +6,8 @@ from app.core.logging import get_logger
 
 from uuid import UUID
 
+from app.exceptions.storage import StorageLimitExceededError
+
 from app.db.models.document import Document
 
 from app.db.models.outbox_event import OutboxEvent
@@ -27,13 +29,15 @@ from app.parser.base import ParserService
 
 from app.core.config import Settings
 
+
 from app.exceptions.document import (
     DocumentTooLargeError,
     EmptyFileError,
     UnsupportedFileTypeError,
+    DocumentNotFoundError,
 )
 
-logger = get_logger("cleanup")
+logger = get_logger(__name__)
 
 
 class DocumentService:
@@ -67,7 +71,13 @@ class DocumentService:
         if file.content_type not in DocumentContentType.values():
             raise UnsupportedFileTypeError()
 
-        storage_result = self.storage.store(file)
+        try:
+            storage_result = self.storage.store(file)
+        except StorageLimitExceededError as exc:
+            raise DocumentTooLargeError(
+                actual_size=exc.actual_size,
+                max_size=exc.max_size,
+            ) from exc
 
         try:
             document = Document(
@@ -75,7 +85,7 @@ class DocumentService:
                 original_filename=file.filename,
                 storage_key=storage_result.storage_key,
                 content_type=file.content_type,
-                file_size=storage_result.size,
+                file_size=storage_result.file_size,
                 status=DocumentStatus.UPLOADED,
             )
 
@@ -109,3 +119,47 @@ class DocumentService:
             status=document.status,
             created_at=document.created_at,
         )
+
+    def get_document(
+        self,
+        document_id: UUID,
+        user_id: UUID,
+    ) -> Document:
+
+        document = self.uow.documents.get_by_id(document_id)
+
+        if document is None or document.user_id != user_id:
+            raise DocumentNotFoundError()
+
+        return document
+
+    def delete_document(
+        self,
+        document_id: UUID,
+        user_id: UUID,
+    ) -> None:
+
+        document = self.uow.documents.get_by_id(document_id)
+
+        if document is None or document.user_id != user_id:
+            raise DocumentNotFoundError()
+
+        self.uow.documents.delete(document)
+        self.uow.commit()
+
+    def update_document(
+        self,
+        document_id: UUID,
+        user_id: UUID,
+    ) -> Document:
+
+        document = self.uow.documents.get_by_id(document_id)
+
+        if document is None or document.user_id != user_id:
+            raise DocumentNotFoundError()
+
+        # perform allowed updates
+
+        self.uow.commit()
+
+        return document
