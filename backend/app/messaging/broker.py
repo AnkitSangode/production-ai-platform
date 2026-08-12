@@ -2,6 +2,8 @@ from typing import Protocol, Any
 
 from collections.abc import Awaitable, Callable
 
+from uuid import UUID
+
 from app.messaging.messages import Message
 
 MessageHandler = Callable[
@@ -17,6 +19,7 @@ class MessageBroker(Protocol):
         ...
     async def publish(
         self,
+        message_id: UUID,
         event_type: str,
         payload: dict[str, Any],
     ) -> None:

@@ -4,7 +4,7 @@ from app.storage.local import StorageService
 
 from app.core.logging import get_logger
 
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from app.exceptions.storage import StorageLimitExceededError
 
@@ -81,6 +81,7 @@ class DocumentService:
 
         try:
             document = Document(
+                id=uuid4(),
                 user_id=user_id,
                 original_filename=file.filename,
                 storage_key=storage_result.storage_key,
@@ -90,6 +91,7 @@ class DocumentService:
             )
 
             event = OutboxEvent(
+                document_id=document.id,
                 event_type=EventType.DOCUMENT_UPLOADED,
                 payload={
                     "document_id": str(document.id),

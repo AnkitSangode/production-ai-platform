@@ -4,11 +4,13 @@ from aio_pika import Connection, Channel, ExchangeType, Exchange, IncomingMessag
 
 from app.messaging.broker import MessageBroker, MessageHandler
 
+from uuid import UUID
+
 from app.core.config import Settings
 
 import json
 
-from aio_pika import Message,DeliveryMode
+from aio_pika import Message, DeliveryMode
 
 from app.messaging.messages import Messages
 
@@ -17,21 +19,45 @@ from typing import Any
 from app.messaging.exceptions import InvalidMessageError
 
 
-class RabbitMQBroker(MessageBroker):
+class RabbitMQMessageBroker(MessageBroker):
+    """
+    RabbitMQ implementation of the MessageBroker interface.
 
-    def __init__(self, settings: Settings, exchange_name: str) -> None:
+    This class is responsible for:
+    - maintaining the RabbitMQ connection
+    - maintaining the publishing channel
+    - declaring the event exchange
+    - publishing persistent messages
+    - waiting for publisher confirmation
+    """
+
+    EXCHANGE_NAME = "atlas.events"
+
+    def __init__(
+        self,
+        settings: Settings,
+        exchange_name: str = EXCHANGE_NAME,
+    ) -> None:
         self.settings = settings
         self.exchange_name = exchange_name
 
-        self.connection: Connection | None = None
-        self.channel: Channel | None = None
-        self.exchange: Exchange | None = None
+        self.connection: aio_pika.abc.AbstractRobustConnection | None = None
 
-    async def connect(self):
+        self.channel: aio_pika.abc.AbstractRobustChannel | None = None
+
+        self.exchange: aio_pika.abc.AbstractRobustExchange | None = None
+
+    async def connect(self) -> None:
+        """
+        Establish the RabbitMQ connection and declare
+        the event exchange.
+        """
 
         self.connection = await aio_pika.connect_robust(self.settings.rabbitmq_url)
 
-        self.channel = await self.connection.channel()
+        self.channel = await self.connection.channel(
+            publisher_confirms=True,
+        )
 
         self.exchange = await self.channel.declare_exchange(
             name=self.exchange_name,
@@ -40,21 +66,56 @@ class RabbitMQBroker(MessageBroker):
         )
 
     def _require_connected(self) -> None:
+        """
+        Ensure the broker has been connected before
+        performing broker operations.
+        """
+
         if self.connection is None or self.channel is None or self.exchange is None:
             raise RuntimeError(
                 "RabbitMQ broker is not connected. "
                 "Call 'connect()' before using the broker."
             )
 
+    def _get_routing_key(
+        self,
+        event_type: str,
+    ) -> str:
+        """
+        Convert an application event type into
+        its RabbitMQ routing key.
+        """
+
+        routing_keys = {
+            "DOCUMENT_UPLOADED": "document.uploaded",
+        }
+
+        try:
+            return routing_keys[event_type]
+        except KeyError:
+            raise ValueError(f"Unsupported event type: {event_type}") from None
+
     async def publish(
         self,
+        *,
+        message_id: UUID,
         event_type: str,
         payload: dict[str, Any],
     ) -> None:
+        """
+        Publish a persistent event to RabbitMQ.
+
+        The method returns only after RabbitMQ confirms
+        the publication when publisher confirms are enabled.
+        """
+
         self._require_connected()
+
+        routing_key = self._get_routing_key(event_type)
 
         body = json.dumps(
             {
+                "message_id": str(message_id),
                 "event_type": event_type,
                 "payload": payload,
             }
@@ -62,6 +123,8 @@ class RabbitMQBroker(MessageBroker):
 
         message = Message(
             body=body,
+            message_id=str(message_id),
+            type=event_type,
             content_type="application/json",
             delivery_mode=DeliveryMode.PERSISTENT,
         )
@@ -70,8 +133,18 @@ class RabbitMQBroker(MessageBroker):
 
         await self.exchange.publish(
             message=message,
-            routing_key=event_type,
+            routing_key=routing_key,
         )
+
+    async def close(self) -> None:
+        """Close the RabbitMQ connection."""
+
+        if self.connection is not None:
+            await self.connection.close()
+
+        self.connection = None
+        self.channel = None
+        self.exchange = None
 
     async def consume(
         self,

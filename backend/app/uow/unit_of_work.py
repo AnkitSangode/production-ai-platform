@@ -24,3 +24,6 @@ class UnitOfWork:
 
     def refresh(self, entity: Any) -> None:
         self._db.refresh(entity)
+
+    def close(self) -> None:
+        self._db.close()

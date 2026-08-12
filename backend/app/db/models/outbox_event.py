@@ -12,10 +12,18 @@ from app.enums.outbox import EventType
 class OutboxEvent(Base):
     __tablename__ = "outbox_events"
 
+    # -------------------------
+    # Identity
+    # -------------------------
+
     id: Mapped[UUID] = mapped_column(
         primary_key=True,
         default=uuid4,
     )
+
+    # -------------------------
+    # Event
+    # -------------------------
 
     document_id: Mapped[UUID] = mapped_column(
         ForeignKey("documents.id"),
@@ -32,6 +40,10 @@ class OutboxEvent(Base):
         nullable=False,
     )
 
+    # -------------------------
+    # Publication
+    # -------------------------
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),
@@ -42,6 +54,10 @@ class OutboxEvent(Base):
         DateTime(timezone=True),
         nullable=True,
     )
+
+    # -------------------------
+    # Processing
+    # -------------------------
 
     retry_count: Mapped[int] = mapped_column(
         Integer,
@@ -59,34 +75,38 @@ class OutboxEvent(Base):
         nullable=True,
     )
 
-    def claim(
-        self,
-        *,
-        worker_id: str,
-        lease_expires_at: datetime,
-    ) -> None:
-        """
-        Claim this event for processing by a worker.
-        """
-        self.worker_id = worker_id
-        self.lease_expires_at = lease_expires_at
+    # -------------------------
+    # Publication behavior
+    # -------------------------
 
     def mark_published(
         self,
         *,
         published_at: datetime,
     ) -> None:
-        """
-        Mark the event as successfully published.
-        """
+        """Mark the event as successfully published."""
         self.published_at = published_at
+
+    # -------------------------
+    # Processing-worker behavior
+    # -------------------------
+
+    def claim(
+        self,
+        *,
+        worker_id: str,
+        lease_expires_at: datetime,
+    ) -> None:
+        """Claim this event for processing by a worker."""
+        self.worker_id = worker_id
+        self.lease_expires_at = lease_expires_at
+
+    def release_lease(self) -> None:
+        """Release the processing lease."""
         self.worker_id = None
         self.lease_expires_at = None
 
-    def mark_failed(self) -> None:
-        """
-        Release the lease and increment retry count.
-        """
+    def mark_processing_failed(self) -> None:
+        """Record a processing failure and release the worker lease."""
         self.retry_count += 1
-        self.worker_id = None
-        self.lease_expires_at = None
+        self.release_lease()
