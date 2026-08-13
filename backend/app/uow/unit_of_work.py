@@ -1,12 +1,15 @@
-from sqlalchemy.orm import Session
 from typing import Any
+
+from sqlalchemy.orm import Session
 
 from app.repositories.document_repository import DocumentRepository
 from app.repositories.outbox_repository import OutboxRepository
 from app.repositories.user import UserRepository
 
+
 class UnitOfWork:
-    def __init__(self, db: Session):
+
+    def __init__(self, db: Session) -> None:
         self._db = db
 
         self.documents = DocumentRepository(db)
@@ -27,3 +30,18 @@ class UnitOfWork:
 
     def close(self) -> None:
         self._db.close()
+
+    def __enter__(self) -> "UnitOfWork":
+        return self
+
+    def __exit__(
+        self,
+        exc_type,
+        exc_value,
+        traceback,
+    ) -> None:
+
+        if exc_type is not None:
+            self.rollback()
+
+        self.close()

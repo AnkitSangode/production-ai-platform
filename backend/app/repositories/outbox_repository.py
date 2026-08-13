@@ -6,6 +6,8 @@ from sqlalchemy.orm import Session
 
 from app.db.models.outbox_event import OutboxEvent
 
+from app.messaging.outbox_publisher import ClaimedOutboxMessage
+
 
 class OutboxRepository:
     """Persistence operations for OutboxEvent."""
@@ -73,10 +75,22 @@ class OutboxRepository:
             self.db.scalars(stmt)
         )
 
+        messages: list[ClaimedOutboxMessage] = []
+
         for event in events:
             event.claim(
                 worker_id=worker_id,
                 lease_expires_at=lease_expires_at,
+            )
+
+             # 2. Extract the data needed after the session closes
+            messages.append(
+                ClaimedOutboxMessage(
+                    event_id=event.id,
+                    event_type=event.event_type,
+                    payload=event.payload,
+                    worker_id=worker_id,
+                )
             )
 
         return events

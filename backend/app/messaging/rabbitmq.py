@@ -1,99 +1,130 @@
-import aio_pika
-
-from aio_pika import Connection, Channel, ExchangeType, Exchange, IncomingMessage
-
-from app.messaging.broker import MessageBroker, MessageHandler
-
+import json
+from typing import Any
 from uuid import UUID
 
+import aio_pika
+from aio_pika import (
+    Channel,
+    Connection,
+    DeliveryMode,
+    Exchange,
+    ExchangeType,
+    Message,
+)
+
 from app.core.config import Settings
-
-import json
-
-from aio_pika import Message, DeliveryMode
-
-from app.messaging.messages import Messages
-
-from typing import Any
-
-from app.messaging.exceptions import InvalidMessageError
+from app.messaging.base import (
+    BrokerConnectionError,
+    MessageBroker,
+    MessagePublishError,
+)
 
 
-class RabbitMQMessageBroker(MessageBroker):
+class RabbitMQBroker(MessageBroker):
     """
-    RabbitMQ implementation of the MessageBroker interface.
+    RabbitMQ implementation of MessageBroker.
 
-    This class is responsible for:
-    - maintaining the RabbitMQ connection
-    - maintaining the publishing channel
-    - declaring the event exchange
-    - publishing persistent messages
-    - waiting for publisher confirmation
+    Responsibilities:
+    - RabbitMQ connection lifecycle
+    - Channel lifecycle
+    - Exchange lifecycle
+    - Message publishing
+    - RabbitMQ-specific error translation
+
+    Does NOT:
+    - access PostgreSQL
+    - know about OutboxEvent
+    - manage event retries
+    - manage leases
+    - mark events as published
     """
-
-    EXCHANGE_NAME = "atlas.events"
 
     def __init__(
         self,
         settings: Settings,
-        exchange_name: str = EXCHANGE_NAME,
+        exchange_name: str,
     ) -> None:
         self.settings = settings
         self.exchange_name = exchange_name
 
-        self.connection: aio_pika.abc.AbstractRobustConnection | None = None
+        self.connection: Connection | None = None
+        self.channel: Channel | None = None
+        self.exchange: Exchange | None = None
 
-        self.channel: aio_pika.abc.AbstractRobustChannel | None = None
-
-        self.exchange: aio_pika.abc.AbstractRobustExchange | None = None
-
-    async def connect(self) -> None:
+    @property
+    def is_ready(self) -> bool:
         """
-        Establish the RabbitMQ connection and declare
-        the event exchange.
-        """
-
-        self.connection = await aio_pika.connect_robust(self.settings.rabbitmq_url)
-
-        self.channel = await self.connection.channel(
-            publisher_confirms=True,
-        )
-
-        self.exchange = await self.channel.declare_exchange(
-            name=self.exchange_name,
-            type=ExchangeType.TOPIC,
-            durable=True,
-        )
-
-    def _require_connected(self) -> None:
-        """
-        Ensure the broker has been connected before
-        performing broker operations.
+        Return whether the broker currently has an
+        initialized connection, channel, and exchange.
         """
 
         if self.connection is None or self.channel is None or self.exchange is None:
-            raise RuntimeError(
-                "RabbitMQ broker is not connected. "
-                "Call 'connect()' before using the broker."
-            )
+            return False
 
-    def _get_routing_key(
-        self,
-        event_type: str,
-    ) -> str:
+        if self.connection.is_closed:
+            return False
+
+        if self.channel.is_closed:
+            return False
+
+        return True
+
+    async def connect(self) -> None:
         """
-        Convert an application event type into
-        its RabbitMQ routing key.
+        Establish a robust RabbitMQ connection.
+
+        Connection
+            ↓
+        Channel
+            ↓
+        Durable Topic Exchange
         """
 
-        routing_keys = {
-            "DOCUMENT_UPLOADED": "document.uploaded",
-        }
+        if self.is_ready:
+            return
+
+        await self._reset_connection()
 
         try:
-            return routing_keys[event_type]
-        except KeyError:
-            raise ValueError(f"Unsupported event type: {event_type}") from None
+            self.connection = await aio_pika.connect_robust(
+                self.settings.rabbitmq_url,
+            )
+
+            self.channel = await self.connection.channel(
+                publisher_confirms=True,
+            )
+
+            self.exchange = await self.channel.declare_exchange(
+                name=self.exchange_name,
+                type=ExchangeType.TOPIC,
+                durable=True,
+            )
+
+        except Exception as exc:
+            await self._reset_connection()
+
+            raise BrokerConnectionError("Failed to connect to RabbitMQ.") from exc
+
+    async def wait_until_ready(self) -> None:
+        """
+        Wait for an established robust channel to become ready.
+
+        This is used after a connection interruption.
+
+        It does not create a new connection.
+        """
+
+        if self.connection is None:
+            raise BrokerConnectionError("RabbitMQ has not been connected.")
+
+        if self.channel is None:
+            raise BrokerConnectionError("RabbitMQ channel has not been created.")
+
+        try:
+            await self.channel.ready()
+
+        except Exception as exc:
+            raise BrokerConnectionError("RabbitMQ channel failed to recover.") from exc
 
     async def publish(
         self,
@@ -103,19 +134,16 @@ class RabbitMQMessageBroker(MessageBroker):
         payload: dict[str, Any],
     ) -> None:
         """
-        Publish a persistent event to RabbitMQ.
+        Publish one persistent message.
 
-        The method returns only after RabbitMQ confirms
-        the publication when publisher confirms are enabled.
+        Publisher confirms are enabled on the channel.
         """
 
         self._require_connected()
 
-        routing_key = self._get_routing_key(event_type)
-
         body = json.dumps(
             {
-                "message_id": str(message_id),
+                "event_id": str(message_id),
                 "event_type": event_type,
                 "payload": payload,
             }
@@ -123,113 +151,64 @@ class RabbitMQMessageBroker(MessageBroker):
 
         message = Message(
             body=body,
-            message_id=str(message_id),
-            type=event_type,
             content_type="application/json",
             delivery_mode=DeliveryMode.PERSISTENT,
+            message_id=str(message_id),
         )
 
         assert self.exchange is not None
 
-        await self.exchange.publish(
-            message=message,
-            routing_key=routing_key,
-        )
+        try:
+            await self.exchange.publish(
+                message,
+                routing_key=event_type,
+            )
+
+        except (
+            aio_pika.exceptions.AMQPConnectionError,
+            ConnectionError,
+            TimeoutError,
+        ) as exc:
+
+            raise BrokerConnectionError(
+                "RabbitMQ connection failed during publication."
+            ) from exc
+
+        except Exception as exc:
+
+            raise MessagePublishError(
+                "RabbitMQ failed to publish the message."
+            ) from exc
 
     async def close(self) -> None:
-        """Close the RabbitMQ connection."""
+        """
+        Close the RabbitMQ connection.
+        """
 
-        if self.connection is not None:
-            await self.connection.close()
+        await self._reset_connection()
+
+    def _require_connected(self) -> None:
+        """
+        Ensure RabbitMQ is initialized before publishing.
+        """
+
+        if not self.is_ready:
+            raise BrokerConnectionError("RabbitMQ broker is not ready.")
+
+    async def _reset_connection(self) -> None:
+        """
+        Clear local RabbitMQ state and close the
+        existing connection if one exists.
+        """
+
+        connection = self.connection
 
         self.connection = None
         self.channel = None
         self.exchange = None
 
-    async def consume(
-        self,
-        queue_name: str,
-        routing_key: str,
-        handler: MessageHandler,
-    ) -> None:
-        self._require_connected()
-
-        assert self.channel is not None
-        assert self.exchange is not None
-
-        queue = await self.channel.declare_queue(
-            name=queue_name,
-            durable=True,
-        )
-
-        await queue.bind(
-            exchange=self.exchange,
-            routing_key=routing_key,
-        )
-
-        self.logger.info(
-            "Consuming messages from queue '%s' with routing key '%s'",
-            queue_name,
-            routing_key,
-        )
-
-        async with queue.iterator() as iterator:
-            async for incoming_message in iterator:
-
-                try:
-                    message = RabbitMQMessage(
-                        incoming_message=incoming_message,
-                    )
-
-                except InvalidMessageError:
-
-                    self.logger.exception("Received invalid RabbitMQ message.")
-
-                    await incoming_message.reject(
-                        requeue=False,
-                    )
-
-                    continue
-
-                await handler(message)
-
-
-class RabbitMQMessage(Messages):
-
-    def __init__(
-        self,
-        incoming_message: IncomingMessage,
-    ) -> None:
-        self._incoming_message = incoming_message
-
-        body = json.loads(incoming_message.body.decode("utf-8"))
-
-        self._event_type = body["event_type"]
-        self._payload = body["payload"]
-
-    @property
-    def event_type(self) -> str:
-        return self._event_type
-
-    @property
-    def payload(self) -> dict[str, Any]:
-        return self._payload
-
-    async def ack(self) -> None:
-        await self._incoming_message.ack()
-
-    async def nack(
-        self,
-        requeue: bool = True,
-    ) -> None:
-        await self._incoming_message.nack(
-            requeue=requeue,
-        )
-
-    async def reject(
-        self,
-        requeue: bool = False,
-    ) -> None:
-        await self._incoming_message.reject(
-            requeue=requeue,
-        )
+        if connection is not None:
+            try:
+                await connection.close()
+            except Exception:
+                pass
