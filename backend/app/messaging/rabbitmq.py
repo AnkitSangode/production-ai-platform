@@ -8,36 +8,20 @@ from aio_pika import (
     Connection,
     DeliveryMode,
     Exchange,
-    ExchangeType,
     Message,
 )
+from aio_pika.abc import AbstractQueue
 
 from app.core.config import Settings
+from app.enums.outbox import EventType
 from app.messaging.base import (
     BrokerConnectionError,
     MessageBroker,
     MessagePublishError,
 )
-
+from app.messaging.topology import BrokerTopology   
 
 class RabbitMQBroker(MessageBroker):
-    """
-    RabbitMQ implementation of MessageBroker.
-
-    Responsibilities:
-    - RabbitMQ connection lifecycle
-    - Channel lifecycle
-    - Exchange lifecycle
-    - Message publishing
-    - RabbitMQ-specific error translation
-
-    Does NOT:
-    - access PostgreSQL
-    - know about OutboxEvent
-    - manage event retries
-    - manage leases
-    - mark events as published
-    """
 
     def __init__(
         self,
@@ -51,40 +35,7 @@ class RabbitMQBroker(MessageBroker):
         self.channel: Channel | None = None
         self.exchange: Exchange | None = None
 
-    @property
-    def is_ready(self) -> bool:
-        """
-        Return whether the broker currently has an
-        initialized connection, channel, and exchange.
-        """
-
-        if self.connection is None or self.channel is None or self.exchange is None:
-            return False
-
-        if self.connection.is_closed:
-            return False
-
-        if self.channel.is_closed:
-            return False
-
-        return True
-
     async def connect(self) -> None:
-        """
-        Establish a robust RabbitMQ connection.
-
-        Connection
-            ↓
-        Channel
-            ↓
-        Durable Topic Exchange
-        """
-
-        if self.is_ready:
-            return
-
-        await self._reset_connection()
-
         try:
             self.connection = await aio_pika.connect_robust(
                 self.settings.rabbitmq_url,
@@ -94,57 +45,89 @@ class RabbitMQBroker(MessageBroker):
                 publisher_confirms=True,
             )
 
-            self.exchange = await self.channel.declare_exchange(
-                name=self.exchange_name,
-                type=ExchangeType.TOPIC,
-                durable=True,
-            )
-
         except Exception as exc:
-            await self._reset_connection()
+            self.connection = None
+            self.channel = None
+            self.exchange = None
 
             raise BrokerConnectionError("Failed to connect to RabbitMQ.") from exc
 
-    async def wait_until_ready(self) -> None:
-        """
-        Wait for an established robust channel to become ready.
-
-        This is used after a connection interruption.
-
-        It does not create a new connection.
-        """
-
-        if self.connection is None:
-            raise BrokerConnectionError("RabbitMQ has not been connected.")
+    async def setup_exchange(self) -> None:
 
         if self.channel is None:
-            raise BrokerConnectionError("RabbitMQ channel has not been created.")
+            raise BrokerConnectionError("RabbitMQ broker is not connected.")
+
+        topology = BrokerTopology(self.channel)
 
         try:
-            await self.channel.ready()
+            self.exchange = await topology.declare_exchange(
+                exchange_name=self.exchange_name,
+            )
 
         except Exception as exc:
-            raise BrokerConnectionError("RabbitMQ channel failed to recover.") from exc
+            raise BrokerConnectionError("Failed to declare RabbitMQ exchange.") from exc
+
+    async def setup_consumer_topology(
+        self,
+        *,
+        queue_name: str,
+        event_type: EventType,
+    ) -> AbstractQueue:
+
+        if self.channel is None:
+            raise BrokerConnectionError("RabbitMQ broker is not connected.")
+
+        if self.exchange is None:
+            raise BrokerConnectionError("RabbitMQ exchange is not configured.")
+
+        topology = BrokerTopology(self.channel)
+
+        try:
+            queue = await topology.declare_queue(
+                queue_name=queue_name,
+            )
+
+            await topology.bind_queue(
+                queue=queue,
+                exchange=self.exchange,
+                routing_key=event_type.value,
+            )
+
+        except Exception as exc:
+            raise BrokerConnectionError(
+                "Failed to configure consumer topology."
+            ) from exc
+
+        return queue
+
+    @property
+    def is_connected(self) -> bool:
+        return (
+            self.connection is not None
+            and not self.connection.is_closed
+            and self.channel is not None
+            and not self.channel.is_closed
+        )
+
+    @property
+    def is_ready(self) -> bool:
+        return self.is_connected and self.exchange is not None
 
     async def publish(
         self,
         *,
         message_id: UUID,
-        event_type: str,
+        event_type: EventType,
         payload: dict[str, Any],
     ) -> None:
-        """
-        Publish one persistent message.
 
-        Publisher confirms are enabled on the channel.
-        """
-
-        self._require_connected()
+        if not self.is_ready:
+            raise BrokerConnectionError("RabbitMQ broker is not ready.")
 
         body = json.dumps(
             {
-                "event_id": str(message_id),
-                "event_type": event_type,
+                "message_id": str(message_id),
+                "event_type": event_type.value,
                 "payload": payload,
             }
         ).encode("utf-8")
@@ -153,62 +136,40 @@ class RabbitMQBroker(MessageBroker):
             body=body,
             content_type="application/json",
             delivery_mode=DeliveryMode.PERSISTENT,
-            message_id=str(message_id),
         )
 
-        assert self.exchange is not None
-
         try:
+            assert self.exchange is not None
+
             await self.exchange.publish(
                 message,
-                routing_key=event_type,
+                routing_key=event_type.value,
             )
 
         except (
             aio_pika.exceptions.AMQPConnectionError,
-            ConnectionError,
-            TimeoutError,
+            aio_pika.exceptions.AMQPChannelError,
+            aio_pika.exceptions.ChannelInvalidStateError,
         ) as exc:
 
             raise BrokerConnectionError(
-                "RabbitMQ connection failed during publication."
+                "RabbitMQ connection or channel became unavailable."
             ) from exc
 
-        except Exception as exc:
+        except aio_pika.exceptions.PublishError as exc:
 
             raise MessagePublishError(
-                "RabbitMQ failed to publish the message."
+                f"RabbitMQ rejected message {message_id}."
             ) from exc
 
     async def close(self) -> None:
-        """
-        Close the RabbitMQ connection.
-        """
 
-        await self._reset_connection()
+        if self.connection is not None:
 
-    def _require_connected(self) -> None:
-        """
-        Ensure RabbitMQ is initialized before publishing.
-        """
-
-        if not self.is_ready:
-            raise BrokerConnectionError("RabbitMQ broker is not ready.")
-
-    async def _reset_connection(self) -> None:
-        """
-        Clear local RabbitMQ state and close the
-        existing connection if one exists.
-        """
-
-        connection = self.connection
-
-        self.connection = None
-        self.channel = None
-        self.exchange = None
-
-        if connection is not None:
             try:
-                await connection.close()
-            except Exception:
-                pass
+                await self.connection.close()
+
+            finally:
+                self.connection = None
+                self.channel = None
+                self.exchange = None

@@ -11,6 +11,8 @@ class Settings(BaseSettings):
 
     database_url: str
     rabbitmq_url: str
+    rabbitmq_exchange: str = "atlas.events"
+    rabbitmq_document_queue: str = "atlas.document.processing"
     redis_url: str
 
     JWT_SECRET_KEY: str

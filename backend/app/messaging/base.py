@@ -1,8 +1,8 @@
-# app/messaging/base.py
-
 from abc import ABC, abstractmethod
 from typing import Any
 from uuid import UUID
+
+from app.enums.outbox import EventType
 
 
 class MessageBrokerError(Exception):
@@ -32,9 +32,7 @@ class MessageBroker(ABC):
 
     @abstractmethod
     async def wait_until_ready(self) -> None:
-        """
-        Wait until the broker is ready for publishing.
-        """
+        """Wait until the broker is ready for publishing."""
         ...
 
     @abstractmethod
@@ -42,7 +40,7 @@ class MessageBroker(ABC):
         self,
         *,
         message_id: UUID,
-        event_type: str,
+        event_type: EventType,
         payload: dict[str, Any],
     ) -> None:
         """Publish a message to the broker."""

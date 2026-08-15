@@ -1,27 +1,28 @@
-
 from typing import Any, Protocol
+from uuid import UUID
+
+from app.enums.outbox import EventType
 
 
-class Messages(Protocol):
+class Message(Protocol):
+
     @property
-    def event_type(self) -> str:
-        ...
+    def message_id(self) -> UUID: ...
 
     @property
-    def payload(self) -> dict[str, Any]:
-        ...
+    def event_type(self) -> EventType: ...
 
-    async def ack(self) -> None:
-        ...
+    @property
+    def payload(self) -> dict[str, Any]: ...
+
+    async def ack(self) -> None: ...
 
     async def nack(
         self,
         requeue: bool = True,
-    ) -> None:
-        ...
+    ) -> None: ...
 
     async def reject(
         self,
         requeue: bool = False,
-    ) -> None:
-        ...
+    ) -> None: ...

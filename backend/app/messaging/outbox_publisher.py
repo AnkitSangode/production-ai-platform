@@ -1,33 +1,20 @@
 import asyncio
-from dataclasses import dataclass
+from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
-from typing import Any
-from uuid import UUID, uuid4
+from uuid import uuid4
 
+from app.core.logging import get_logger
 from app.messaging.base import (
     BrokerConnectionError,
     MessageBroker,
     MessagePublishError,
 )
+from app.messaging.contracts import ClaimedOutboxMessage
 from app.uow.unit_of_work import UnitOfWork
-from collections.abc import Callable
 
 UoWFactory = Callable[[], UnitOfWork]
 
-
-@dataclass(frozen=True)
-class ClaimedOutboxMessage:
-    """
-    Immutable representation of a claimed outbox event.
-
-    We intentionally don't pass SQLAlchemy ORM objects
-    into RabbitMQ-related code.
-    """
-
-    event_id: UUID
-    event_type: str
-    payload: dict[str, Any]
-    worker_id: str
+logger = get_logger(__name__)
 
 
 class OutboxPublisher:
@@ -35,18 +22,18 @@ class OutboxPublisher:
     Publishes PostgreSQL outbox events to a message broker.
 
     Responsibilities:
-    - claim events
+    - claim events from the outbox
     - establish durable ownership
-    - publish events
-    - mark successful events as published
-    - mark definite failures
-    - handle broker outages
-    - poll continuously
-    - graceful shutdown
+    - publish events to the broker
+    - mark successfully published events
+    - continuously poll for new events
+    - handle graceful shutdown
 
     Does NOT:
     - perform SQL directly
     - know RabbitMQ internals
+    - manage RabbitMQ connection/reconnection internals
+    - serialize broker messages
     """
 
     def __init__(
@@ -58,10 +45,7 @@ class OutboxPublisher:
         poll_interval: float = 5.0,
         lease_seconds: int = 60,
         max_retry_count: int = 5,
-        reconnect_base_delay: float = 1.0,
-        reconnect_max_delay: float = 30.0,
     ) -> None:
-
         self.broker = broker
         self.uow_factory = uow_factory
 
@@ -70,94 +54,10 @@ class OutboxPublisher:
         self.lease_seconds = lease_seconds
         self.max_retry_count = max_retry_count
 
-        self.reconnect_base_delay = reconnect_base_delay
-        self.reconnect_max_delay = reconnect_max_delay
-
         # Unique identity for this publisher process.
         self.worker_id = f"outbox-publisher-{uuid4()}"
 
         self._shutdown_event = asyncio.Event()
-
-    # =========================================================
-    # CONNECTION
-    # =========================================================
-
-    async def _connect_with_retry(self) -> None:
-        """
-        Establish the initial broker connection.
-
-        Uses exponential backoff.
-
-        1s
-        2s
-        4s
-        8s
-        ...
-        max 30s
-        """
-
-        attempt = 0
-
-        while not self._shutdown_event.is_set():
-
-            try:
-                await self.broker.connect()
-
-                print(f"[{self.worker_id}] " "Connected to message broker.")
-
-                return
-
-            except BrokerConnectionError as exc:
-
-                delay = min(
-                    self.reconnect_base_delay * (2**attempt),
-                    self.reconnect_max_delay,
-                )
-
-                attempt += 1
-
-                print(
-                    f"[{self.worker_id}] "
-                    f"Broker connection failed. "
-                    f"Retrying in {delay:.1f}s. "
-                    f"Attempt={attempt}. "
-                    f"Error={exc}"
-                )
-
-                try:
-                    await asyncio.wait_for(
-                        self._shutdown_event.wait(),
-                        timeout=delay,
-                    )
-
-                except asyncio.TimeoutError:
-                    pass
-
-    async def _wait_for_broker_recovery(self) -> bool:
-        """
-        Wait for an established robust broker connection
-        to recover.
-
-        Returns:
-            True  -> broker recovered
-            False -> shutdown requested
-        """
-
-        if self._shutdown_event.is_set():
-            return False
-
-        try:
-            await self.broker.wait_until_ready()
-
-            print(f"[{self.worker_id}] " "Message broker recovered.")
-
-            return True
-
-        except BrokerConnectionError as exc:
-
-            print(f"[{self.worker_id}] " f"Broker recovery failed: {exc}")
-
-            return False
 
     # =========================================================
     # CLAIM
@@ -166,6 +66,18 @@ class OutboxPublisher:
     def claim_batch(
         self,
     ) -> list[ClaimedOutboxMessage]:
+        """
+        Claim a batch of unpublished outbox events.
+
+        The repository:
+        - selects eligible events
+        - locks them
+        - assigns this worker as owner
+        - assigns a lease
+
+        We then commit that ownership before
+        attempting to publish to the broker.
+        """
 
         now = datetime.now(timezone.utc)
 
@@ -181,6 +93,7 @@ class OutboxPublisher:
                 max_retry_count=self.max_retry_count,
             )
 
+            # Ownership becomes durable here.
             uow.commit()
 
             return messages
@@ -194,27 +107,32 @@ class OutboxPublisher:
         message: ClaimedOutboxMessage,
     ) -> bool:
         """
-        Mark an event published only if this publisher
-        still owns it.
+        Mark an event as published only if this worker
+        still owns the event.
+
+        Returns:
+            True  -> event successfully marked published
+            False -> ownership was lost
         """
 
         with self.uow_factory() as uow:
 
             updated = uow.outbox.mark_published(
                 event_id=message.event_id,
-                worker_id=self.worker_id,
+                worker_id=message.worker_id,
                 published_at=datetime.now(timezone.utc),
             )
 
             if not updated:
+                logger.warning(
+                    "Lost ownership of outbox event before " "marking it published",
+                    extra={
+                        "event_id": str(message.event_id),
+                        "worker_id": message.worker_id,
+                    },
+                )
 
                 uow.rollback()
-
-                print(
-                    f"[{self.worker_id}] "
-                    f"Lost ownership of event "
-                    f"{message.event_id}."
-                )
 
                 return False
 
@@ -231,27 +149,31 @@ class OutboxPublisher:
         message: ClaimedOutboxMessage,
     ) -> bool:
         """
-        Mark a definitively failed publication attempt.
+        Mark an event as failed.
 
-        Only succeeds if this publisher still owns the event.
+        This method is intentionally not used automatically
+        by publish_one() yet.
+
+        Retry policy will be introduced separately.
         """
 
         with self.uow_factory() as uow:
 
             updated = uow.outbox.mark_failed(
                 event_id=message.event_id,
-                worker_id=self.worker_id,
+                worker_id=message.worker_id,
             )
 
             if not updated:
+                logger.warning(
+                    "Lost ownership while marking " "outbox event failed",
+                    extra={
+                        "event_id": str(message.event_id),
+                        "worker_id": message.worker_id,
+                    },
+                )
 
                 uow.rollback()
-
-                print(
-                    f"[{self.worker_id}] "
-                    f"Lost ownership while marking "
-                    f"{message.event_id} failed."
-                )
 
                 return False
 
@@ -268,25 +190,23 @@ class OutboxPublisher:
         message: ClaimedOutboxMessage,
     ) -> None:
         """
-        Publish one claimed event.
+        Publish one claimed outbox event.
 
-        Success:
-            publish
-              ↓
-            mark_published
+        Lifecycle:
 
-        Definite failure:
-            publish
-              ↓
-            mark_failed
+            publish to broker
+                ↓
+            broker confirmation
+                ↓
+            mark published in PostgreSQL
 
-        Connection failure:
-            publish
-              ↓
-            KEEP LEASE
-              ↓
-            propagate error
+        We NEVER mark the event as published before
+        the broker confirms publication.
         """
+
+        # -----------------------------------------------------
+        # 1. Publish to broker
+        # -----------------------------------------------------
 
         try:
 
@@ -296,46 +216,40 @@ class OutboxPublisher:
                 payload=message.payload,
             )
 
-        except MessagePublishError as exc:
-
-            print(
-                f"[{self.worker_id}] "
-                f"Message publication failed for "
-                f"{message.event_id}: {exc}"
-            )
-
-            self.mark_failed(message)
-
-            return
-
         except BrokerConnectionError:
-
-            print(
-                f"[{self.worker_id}] "
-                f"Broker connection lost while publishing "
-                f"{message.event_id}."
+            logger.exception(
+                "Broker connection failed while publishing " "outbox event",
+                extra={
+                    "event_id": str(message.event_id),
+                    "worker_id": message.worker_id,
+                    "event_type": message.event_type.value,
+                },
             )
-
-            # IMPORTANT:
-            #
-            # We intentionally DO NOT call mark_failed().
-            #
-            # The message may already have reached RabbitMQ.
-            # Therefore the publication outcome is uncertain.
-            #
-            # Keep the lease and let the broker recover.
 
             raise
 
-        published = self.mark_published(message)
+        except MessagePublishError:
+            logger.exception(
+                "Broker rejected outbox event publication",
+                extra={
+                    "event_id": str(message.event_id),
+                    "worker_id": message.worker_id,
+                    "event_type": message.event_type.value,
+                },
+            )
 
-        if not published:
+            raise
 
-            print(
-                f"[{self.worker_id}] "
-                f"Event {message.event_id} was published "
-                f"but ownership was lost before the "
-                f"database update."
+        # -----------------------------------------------------
+        # 2. Broker confirmed publication
+        # -----------------------------------------------------
+
+        marked = self.mark_published(message)
+
+        if not marked:
+            raise RuntimeError(
+                f"Lost ownership of outbox event "
+                f"{message.event_id} before marking it published."
             )
 
     # =========================================================
@@ -346,29 +260,96 @@ class OutboxPublisher:
         """
         Execute one publishing cycle.
 
-        Important:
-        We never claim new events while the broker
-        is known to be unavailable.
+        Flow:
+
+            broker ready
+                ↓
+            claim batch
+                ↓
+            commit ownership
+                ↓
+            publish each message
+                ↓
+            mark successful messages published
         """
+
+        # -----------------------------------------------------
+        # 1. Make sure broker is available
+        # -----------------------------------------------------
 
         if not self.broker.is_ready:
 
-            recovered = await self._wait_for_broker_recovery()
+            await self.broker.wait_until_ready()
 
-            if not recovered:
+            if not self.broker.is_ready:
                 return
+
+        # -----------------------------------------------------
+        # 2. Claim events
+        # -----------------------------------------------------
 
         messages = self.claim_batch()
 
         if not messages:
             return
 
+        # -----------------------------------------------------
+        # 3. Publish claimed events
+        # -----------------------------------------------------
+
         for message in messages:
 
             if self._shutdown_event.is_set():
                 return
 
-            await self.publish_one(message)
+            try:
+
+                await self.publish_one(message)
+
+            except BrokerConnectionError:
+                """
+                RabbitMQ connection is unavailable.
+
+                Stop this batch immediately.
+
+                We do not want to keep trying to publish
+                other messages when the broker itself is down.
+                """
+
+                raise
+
+            except MessagePublishError:
+                """
+                The broker rejected this particular publication.
+
+                Leave the event unpublished.
+
+                Its lease remains active and it can be
+                reclaimed after the lease expires.
+                """
+
+                continue
+
+            except Exception:
+                """
+                Unexpected error.
+
+                This could include a PostgreSQL failure after
+                RabbitMQ already confirmed the message.
+
+                Therefore we DO NOT mark the event failed here.
+                """
+
+                logger.exception(
+                    "Unexpected error while processing " "outbox event",
+                    extra={
+                        "event_id": str(message.event_id),
+                        "worker_id": message.worker_id,
+                        "event_type": message.event_type.value,
+                    },
+                )
+
+                continue
 
     # =========================================================
     # STOP
@@ -379,7 +360,12 @@ class OutboxPublisher:
         Request graceful shutdown.
         """
 
-        print(f"[{self.worker_id}] " "Shutdown requested.")
+        logger.info(
+            "Outbox publisher shutdown requested",
+            extra={
+                "worker_id": self.worker_id,
+            },
+        )
 
         self._shutdown_event.set()
 
@@ -389,41 +375,55 @@ class OutboxPublisher:
 
     async def run_forever(self) -> None:
         """
-        Main publisher lifecycle.
+        Run the outbox publisher continuously.
 
         Startup:
 
             connect
-              ↓
-            retry if necessary
+                ↓
 
         Runtime:
 
             run_once
-              ↓
+                ↓
             wait
-              ↓
+                ↓
             run_once
-              ↓
+                ↓
             ...
 
         Shutdown:
 
             stop
-              ↓
+                ↓
             close broker
         """
 
-        print(f"[{self.worker_id}] " "Starting outbox publisher.")
+        logger.info(
+            "Starting outbox publisher",
+            extra={
+                "worker_id": self.worker_id,
+            },
+        )
 
         # -----------------------------------------------------
         # INITIAL CONNECTION
         # -----------------------------------------------------
 
-        await self._connect_with_retry()
+        try:
 
-        if self._shutdown_event.is_set():
-            return
+            await self.broker.connect()
+
+        except BrokerConnectionError:
+
+            logger.exception(
+                "Initial broker connection failed",
+                extra={
+                    "worker_id": self.worker_id,
+                },
+            )
+
+            raise
 
         # -----------------------------------------------------
         # MAIN LOOP
@@ -439,20 +439,35 @@ class OutboxPublisher:
 
                 except BrokerConnectionError:
 
-                    print(
-                        f"[{self.worker_id}] "
-                        "Broker connection lost. "
-                        "Pausing publishing."
+                    logger.warning(
+                        "Broker connection lost. " "Waiting for broker recovery.",
+                        extra={
+                            "worker_id": self.worker_id,
+                        },
                     )
 
-                    recovered = await self._wait_for_broker_recovery()
+                    try:
+                        await self.broker.wait_until_ready()
 
-                    if not recovered:
+                    except BrokerConnectionError:
+
+                        logger.exception(
+                            "Broker recovery failed",
+                            extra={
+                                "worker_id": self.worker_id,
+                            },
+                        )
+
                         break
 
                 except Exception:
 
-                    print(f"[{self.worker_id}] " "Unexpected error in publisher cycle.")
+                    logger.exception(
+                        "Unexpected error in outbox publisher cycle",
+                        extra={
+                            "worker_id": self.worker_id,
+                        },
+                    )
 
                 # -------------------------------------------------
                 # POLL INTERVAL
@@ -470,6 +485,11 @@ class OutboxPublisher:
 
         finally:
 
-            print(f"[{self.worker_id}] " "Closing outbox publisher.")
+            logger.info(
+                "Closing outbox publisher",
+                extra={
+                    "worker_id": self.worker_id,
+                },
+            )
 
             await self.broker.close()

@@ -1,9 +1,9 @@
-from enum import StrEnum, auto
+from enum import StrEnum
 
 
 class EventType(StrEnum):
-    DOCUMENT_UPLOADED = auto()
-    DOCUMENT_PROCESSING_STARTED = auto()
-    DOCUMENT_READY = auto()
-    DOCUMENT_DELETED = auto()
-    DOCUMENT_FAILED = auto()
+    DOCUMENT_UPLOADED = "document.uploaded"
+    DOCUMENT_PROCESSING_STARTED = "document.processing.started"
+    DOCUMENT_READY = "document.ready"
+    DOCUMENT_DELETED = "document.deleted"
+    DOCUMENT_FAILED = "document.failed"

@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 
 from app.db.models.outbox_event import OutboxEvent
 
-from app.messaging.outbox_publisher import ClaimedOutboxMessage
+from app.messaging.contracts import ClaimedOutboxMessage
 
 
 class OutboxRepository:
@@ -29,7 +29,7 @@ class OutboxRepository:
         lease_expires_at: datetime,
         batch_size: int,
         max_retry_count: int,
-    ) -> list[OutboxEvent]:
+    ) -> list[ClaimedOutboxMessage]:
         """
         Claim a batch of unpublished events.
 
@@ -93,7 +93,7 @@ class OutboxRepository:
                 )
             )
 
-        return events
+        return messages
 
     def mark_published(
         self,
