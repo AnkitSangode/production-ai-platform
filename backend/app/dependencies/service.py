@@ -6,7 +6,7 @@ from app.dependencies.storage import get_storage_service
 from app.core.config import Settings, get_settings
 from app.uow.unit_of_work import UnitOfWork
 from app.dependencies.uow import get_unit_of_work
-from app.services.document_service import DocumentService
+from app.services.document import DocumentService
 from app.parser.base import ParserService
 from app.storage.base import StorageService
 

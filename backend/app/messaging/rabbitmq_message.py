@@ -54,6 +54,20 @@ class RabbitMQMessage:
     def payload(self) -> dict[str, Any]:
         return self._payload
 
+    @property
+    def acquired_count(self) -> int:
+        value = self._message.headers.get(
+            "x-acquired-count",
+            0,
+        )
+
+        if not isinstance(value, int):
+            raise InvalidRabbitMQMessage(
+                "Invalid x-acquired-count header."
+            )
+
+        return value
+
     async def ack(self) -> None:
         await self._message.ack()
 

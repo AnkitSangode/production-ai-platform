@@ -30,10 +30,10 @@ class MessageBroker(ABC):
         """Establish a connection to the broker."""
         ...
 
-    @abstractmethod
-    async def wait_until_ready(self) -> None:
-        """Wait until the broker is ready for publishing."""
-        ...
+    # @abstractmethod
+    # async def wait_until_ready(self) -> None:
+    #     """Wait until the broker is ready for publishing."""
+        # ...
 
     @abstractmethod
     async def publish(

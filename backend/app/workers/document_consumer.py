@@ -5,18 +5,33 @@ from app.enums.outbox import EventType
 from app.messaging.rabbitmq import RabbitMQBroker
 from app.messaging.rabbitmq_consumer import RabbitMQConsumer
 from app.messaging.rabbitmq_message import RabbitMQMessage
+from app.messaging.retry_policy import RetryPolicy
+from uuid import uuid4
+
+from app.handlers.document import handle_document_uploaded
+
+# async def test_handler(
+#     message: RabbitMQMessage,
+# ) -> None:
+#     print(
+#         f"Received event: "
+#         f"{message.event_type} "
+#         f"({message.message_id})"
+#     )
+
+#     print(f"Payload: {message.payload}")
+
+# async def test_handler(message:RabbitMQMessage) -> None:
+#     print("Processing...")
+#     raise RetryableError("Simulated failure")
 
 
-async def test_handler(
-    message: RabbitMQMessage,
-) -> None:
-    print(
-        f"Received event: "
-        f"{message.event_type} "
-        f"({message.message_id})"
-    )
+# async def test_handler(
+#     message: RabbitMQMessage,
+# ) -> None:
 
-    print(f"Payload: {message.payload}")
+#     print("Processing...")
+#     print("Processing successful.")
 
 
 async def main() -> None:
@@ -28,6 +43,16 @@ async def main() -> None:
         exchange_name=settings.rabbitmq_exchange,
     )
 
+    worker_id = uuid4()
+
+    async def handler(
+        message: RabbitMQMessage,
+    ) -> None:
+        await handle_document_uploaded(
+            message,
+            worker_id,
+        )
+
     try:
         await broker.connect()
         await broker.setup_exchange()
@@ -37,23 +62,24 @@ async def main() -> None:
             event_type=EventType.DOCUMENT_UPLOADED,
         )
 
+        retry_policy = RetryPolicy(
+            max_attempts=5,
+        )
+
         consumer = RabbitMQConsumer(
             queue=queue,
-            handler=test_handler,
+            handler=handler,
+            retry_policy=retry_policy,
         )
 
         await consumer.start()
 
-        print(
-            "Document consumer started. "
-            "Waiting for messages..."
-        )
+        print("Document consumer started. " "Waiting for messages...")
 
         await asyncio.Future()
 
     finally:
         await broker.close()
-
-
+        
 if __name__ == "__main__":
     asyncio.run(main())

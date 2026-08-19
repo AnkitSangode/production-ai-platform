@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.repositories.outbox_repository import OutboxRepository
 from app.db.models import OutboxEvent
-from app.messaging.broker import MessageBroker
+from app.messaging.base import MessageBroker
 
 
 class OutboxPublisher:

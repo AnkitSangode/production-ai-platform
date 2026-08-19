@@ -12,7 +12,12 @@ class Settings(BaseSettings):
     database_url: str
     rabbitmq_url: str
     rabbitmq_exchange: str = "atlas.events"
+
+    rabbitmq_dlq_exchange: str = "atlas.dlx"
+
     rabbitmq_document_queue: str = "atlas.document.processing"
+
+    rabbitmq_document_dlq: str = "atlas.document.dlq"
     redis_url: str
 
     JWT_SECRET_KEY: str
@@ -21,7 +26,7 @@ class Settings(BaseSettings):
 
     openai_api_key: str
 
-    chroma_host:str = "localhost"
+    chroma_host: str = "localhost"
     chroma_port: int = 8001
 
     MAX_DOCUMENT_SIZE: int = 25 * 1024 * 1024
@@ -39,5 +44,6 @@ class Settings(BaseSettings):
 @lru_cache
 def get_settings() -> Settings:
     return Settings()
+
 
 settings = get_settings()

@@ -1,41 +1,25 @@
-from sqlalchemy.orm import Session
-
-from app.storage.local import StorageService
-
-from app.core.logging import get_logger
-
 from uuid import UUID, uuid4
-
-from app.exceptions.storage import StorageLimitExceededError
-
-from app.db.models.document import Document
-
-from app.db.models.outbox_event import OutboxEvent
-
-from app.enums.document import DocumentStatus
-
-from app.enums.outbox import EventType
-
-from app.schemas.document import DocumentResponse
-
-from app.enums.document import DocumentContentType
 
 from fastapi import UploadFile
 
-from app.uow.unit_of_work import UnitOfWork
-
-
-from app.parser.base import ParserService
-
 from app.core.config import Settings
-
-
+from app.core.logging import get_logger
+from app.db.models.document import Document
+from app.db.models.outbox_event import OutboxEvent
+from app.enums.document import DocumentContentType, DocumentStatus
+from app.enums.outbox import EventType
 from app.exceptions.document import (
+    DocumentNotFoundError,
     DocumentTooLargeError,
     EmptyFileError,
     UnsupportedFileTypeError,
-    DocumentNotFoundError,
 )
+from app.exceptions.storage import StorageLimitExceededError
+from app.parser.base import ParserService
+from app.schemas.document import DocumentResponse
+from app.storage.local import StorageService
+from app.uow.unit_of_work import UnitOfWork
+
 
 logger = get_logger(__name__)
 
@@ -62,7 +46,10 @@ class DocumentService:
         if file.size == 0:
             raise EmptyFileError()
 
-        if file.size is not None and file.size > self.settings.MAX_DOCUMENT_SIZE:
+        if (
+            file.size is not None
+            and file.size > self.settings.MAX_DOCUMENT_SIZE
+        ):
             raise DocumentTooLargeError(
                 actual_size=file.size,
                 max_size=self.settings.MAX_DOCUMENT_SIZE,
@@ -73,6 +60,7 @@ class DocumentService:
 
         try:
             storage_result = self.storage.store(file)
+
         except StorageLimitExceededError as exc:
             raise DocumentTooLargeError(
                 actual_size=exc.actual_size,
@@ -105,6 +93,7 @@ class DocumentService:
 
         except Exception:
             self.uow.rollback()
+
             try:
                 self.storage.delete(storage_result.storage_key)
             except Exception:

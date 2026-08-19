@@ -1,34 +1,54 @@
+from datetime import datetime, timedelta, timezone
+from uuid import UUID
+
+from app.core.logging import get_logger
+from app.uow.unit_of_work import UnitOfWork
+
+logger = get_logger(__name__)
+
+
 class DocumentProcessingService:
     def __init__(
         self,
-        repository: DocumentRepository,
-        storage: StorageService,
-        parser: ParserService,
-        chunking_service: ChunkingService,
-        embedding_service: EmbeddingService,
-        vector_store: VectorStore,
+        uow: UnitOfWork,
+        worker_id: UUID,
     ):
-        self.repository = repository
-        self.storage = storage
-        self.parser = parser
-        self.chunking_service = chunking_service
-        self.embedding_service = embedding_service
-        self.vector_store = vector_store
+        self.uow = uow
+        self.worker_id = worker_id
 
-    def process(self, document_id: UUID) -> None:
-        document = self.repository.get_by_id(document_id)
+    def process_document(
+        self,
+        *,
+        document_id: UUID,
+    ) -> bool:
 
-        if document is None:
-            logger.warning(
-                "Document %s not found. Skipping processing.",
-                document_id,
-            )
-            return
+        lease_duration = timedelta(minutes=5)
 
-        claimed = self.repository.claim_for_processing(document.id)
+        lease_expiry = datetime.now(timezone.utc) + lease_duration
+
+        claimed = self.uow.documents.claim_for_processing(
+            document_id=document_id,
+            worker_id=self.worker_id,
+            lease_expiry=lease_expiry,
+        )
 
         if not claimed:
-            logger.info("Document is already being processed.")
-            return
+            logger.info(
+                "Document is already owned by another worker.",
+                extra={
+                    "document_id": str(document_id),
+                },
+            )
+            return False
 
-        file_stream = self.storage.retrieve(document.storage_key)
+        logger.info(
+            "Document claimed for processing.",
+            extra={
+                "document_id": str(document_id),
+                "worker_id": str(self.worker_id),
+            },
+        )
+
+        self.uow.commit()
+
+        return True

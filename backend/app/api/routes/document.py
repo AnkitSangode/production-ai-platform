@@ -4,7 +4,7 @@ from app.dependencies.auth import get_current_user
 from app.dependencies.service import get_document_service
 from app.db.models.user import User
 from app.schemas.document import DocumentResponse
-from app.services.document_service import DocumentService
+from app.services.document import DocumentService
 
 router = APIRouter(
     prefix="/documents",

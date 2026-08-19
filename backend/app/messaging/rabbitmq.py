@@ -19,7 +19,8 @@ from app.messaging.base import (
     MessageBroker,
     MessagePublishError,
 )
-from app.messaging.topology import BrokerTopology   
+from app.messaging.topology import BrokerTopology
+
 
 class RabbitMQBroker(MessageBroker):
 
@@ -83,20 +84,46 @@ class RabbitMQBroker(MessageBroker):
         topology = BrokerTopology(self.channel)
 
         try:
-            queue = await topology.declare_queue(
-                queue_name=queue_name,
+            # 1. Declare dead-letter exchange
+            dead_letter_exchange = await topology.declare_dead_letter_exchange(
+                exchange_name=self.settings.rabbitmq_dlq_exchange,
             )
 
+            # 2. Declare dead-letter queue and bind it
+            await topology.declare_dead_letter_queue(
+                queue_name=self.settings.rabbitmq_document_dlq,
+                exchange=dead_letter_exchange,
+                routing_key="dead-letter",
+            )
+
+            # 3. Declare processing queue
+            queue = await topology.declare_processing_queue(
+                queue_name=queue_name,
+                dead_letter_exchange=self.settings.rabbitmq_dlq_exchange,
+                dead_letter_routing_key="dead-letter",
+            )
+
+            # 4. Bind processing queue to main exchange
             await topology.bind_queue(
                 queue=queue,
                 exchange=self.exchange,
                 routing_key=event_type.value,
             )
 
+        # except Exception as exc:
+        #     print(f"Consumer topology error: {exc!r}")
+
+        #     raise BrokerConnectionError(
+        #         "Failed to configure consumer topology."
+        #     ) from exc
+
         except Exception as exc:
-            raise BrokerConnectionError(
-                "Failed to configure consumer topology."
-            ) from exc
+            print("\n========== CONSUMER TOPOLOGY ERROR ==========")
+            print(type(exc).__name__)
+            print(str(exc))
+            print("=============================================\n")
+
+            raise
 
         return queue
 

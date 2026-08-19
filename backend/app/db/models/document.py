@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 from datetime import datetime
-from uuid import UUID, uuid4
+from uuid import  uuid4,UUID
 
 from sqlalchemy import DateTime, ForeignKey, Integer, String, Enum
+from sqlalchemy import UUID as SQLAlchemyUUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -79,6 +80,16 @@ class Document(Base):
 
     error_message: Mapped[str | None] = mapped_column(
         String(1000),
+        nullable=True,
+    )
+
+    processing_worker_id: Mapped[UUID | None] = mapped_column(
+        SQLAlchemyUUID(as_uuid=True),
+        nullable=True,
+    )
+
+    processing_lease_expiry: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
         nullable=True,
     )
 
