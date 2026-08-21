@@ -3,6 +3,7 @@ from uuid import UUID
 from app.messaging.rabbitmq_message import RabbitMQMessage
 from app.services.document_processing_service import DocumentProcessingService
 from app.uow.factory import create_unit_of_work
+from app.messaging.delivery_context import DeliveryContext
 
 
 def get_document_id(
@@ -27,17 +28,25 @@ def get_document_id(
 async def handle_document_uploaded(
     message: RabbitMQMessage,
     worker_id: UUID,
+    context: DeliveryContext,
 ) -> None:
+    print("H1: Entered document handler")
 
     document_id = get_document_id(message)
 
+    print(f"H2: document_id={document_id}")
+
     with create_unit_of_work() as uow:
+        print("H3: UnitOfWork created")
 
         service = DocumentProcessingService(
             uow=uow,
             worker_id=worker_id,
         )
-
+        print("H4: DocumentProcessingService created")
         service.process_document(
             document_id=document_id,
+            final_attempt = context.final_attempt,
         )
+
+        print("H5: process_document returned")

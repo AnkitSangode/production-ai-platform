@@ -6,7 +6,8 @@ from app.messaging.rabbitmq import RabbitMQBroker
 from app.messaging.rabbitmq_consumer import RabbitMQConsumer
 from app.messaging.rabbitmq_message import RabbitMQMessage
 from app.messaging.retry_policy import RetryPolicy
-from uuid import uuid4
+from app.messaging.delivery_context import DeliveryContext
+from uuid import uuid4, UUID
 
 from app.handlers.document import handle_document_uploaded
 
@@ -47,10 +48,12 @@ async def main() -> None:
 
     async def handler(
         message: RabbitMQMessage,
+        context: DeliveryContext 
     ) -> None:
         await handle_document_uploaded(
             message,
             worker_id,
+            context
         )
 
     try:

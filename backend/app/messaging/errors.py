@@ -4,3 +4,6 @@ class RetryableError(Exception):
 
 class PermanentError(Exception):
     """The operation cannot succeed by retrying."""
+
+class RetryExhaustedError(Exception):
+    pass

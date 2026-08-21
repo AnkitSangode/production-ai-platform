@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from uuid import  uuid4,UUID
+from uuid import uuid4, UUID
 
 from sqlalchemy import DateTime, ForeignKey, Integer, String, Enum
 from sqlalchemy import UUID as SQLAlchemyUUID
@@ -11,7 +11,10 @@ from app.db.base import Base
 
 from typing import TYPE_CHECKING
 
-from app.enums.document import DocumentStatus
+from app.enums.document import (
+    DocumentProcessingStage,
+    DocumentStatus,
+)
 
 if TYPE_CHECKING:
     from app.db.models.user import User
@@ -78,6 +81,11 @@ class Document(Base):
         nullable=False,
     )
 
+    processing_stage: Mapped[DocumentProcessingStage | None] = mapped_column(
+        Enum(DocumentProcessingStage),
+        nullable=True,
+    )
+    
     error_message: Mapped[str | None] = mapped_column(
         String(1000),
         nullable=True,
@@ -92,6 +100,7 @@ class Document(Base):
         DateTime(timezone=True),
         nullable=True,
     )
+
 
     # -------------------------
     # Audit

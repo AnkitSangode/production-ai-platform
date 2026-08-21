@@ -8,6 +8,19 @@ class DocumentStatus(StrEnum):
     FAILED = "FAILED"
 
 
+class DocumentClaimResult(StrEnum):
+    CLAIMED = "CLAIMED"
+    ALREADY_OWNED = "ALREADY_OWNED"
+    OWNED_BY_OTHER = "OWNED_BY_OTHER"
+
+
+class DocumentProcessingStage(StrEnum):
+    PARSING = "PARSING"
+    CHUNKING = "CHUNKING"
+    EMBEDDING = "EMBEDDING"
+    INDEXING = "INDEXING"
+
+
 class DocumentContentType(str, Enum):
     PDF = "application/pdf"
 
